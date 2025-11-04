@@ -60,7 +60,6 @@ SPEED = 50
 
 # Header with status and battery
 header = ctk.CTkFrame(root)
-header.pack(fill='x', pady=6)
 status_var = tk.StringVar(value="Connecting...")
 status_label = ctk.CTkLabel(header, textvariable=status_var)
 status_label.pack(side='left', padx=8)
@@ -124,7 +123,6 @@ def ui_status(message: str):
 
 # Tabs: Controls (default) and Modes using custom ui Tabs
 tabs = Tabs(root)
-tabs.pack(fill='x', pady=4)
 tab_controls = tabs.add('Controls')
 tab_modes = tabs.add('Modes')
 tab_tricks = tabs.add('Tricks')
@@ -180,8 +178,7 @@ ctk.CTkButton(pad_alt, text='Down', width=48, command=lambda: run_async(lambda: 
 controls_buttons = ttk.Frame(controls)
 controls_buttons.pack(pady=6)
 
-# Place video after tabs so controls stay visible
-video_label.pack(fill='both', expand=True)
+# Place video after tabs so controls stay visible (packed when overlay hides)
 
 is_flying = False
 last_takeoff_attempt_ts = 0.0
@@ -1341,7 +1338,7 @@ update_face_follow()
 # Connectivity overlay and checks (CustomTkinter)
 overlay = ctk.CTkFrame(root)
 overlay_label = ctk.CTkLabel(overlay, text='Connecting...')
-overlay_btn = ctk.CTkButton(overlay, text='Retry')
+overlay_btn = ctk.CTkButton(overlay, text='Reconnect')
 overlay_label.pack(pady=6)
 overlay_btn.pack()
 _overlay_visible = False
@@ -1420,6 +1417,18 @@ overlay_btn.configure(command=lambda b=overlay_btn: run_async(attempt_connect, b
 _show_overlay('Connecting...')
 run_async(attempt_connect)
 
+# Startup grace window (~7s) to verify connection before showing disconnected
+startup_grace_until = time.time() + 7.0
+
+def _startup_finalize():
+    try:
+        if not is_connected:
+            _show_overlay('Disconnected')
+    except Exception:
+        pass
+
+root.after(7000, _startup_finalize)
+
 def periodic_check():
     global is_connected, video_started
     # Debounce/failure counting to avoid overlay flicker
@@ -1457,6 +1466,14 @@ def periodic_check():
             # else keep previous state (avoid flicker)
 
         if not is_connected:
+            # Honor startup grace period: keep "Connecting..." for ~7 seconds
+            try:
+                grace_until = globals().get('startup_grace_until', 0.0)
+            except Exception:
+                grace_until = 0.0
+            if time.time() < grace_until:
+                _show_overlay('Connecting...')
+                return
             try:
                 if video is not None:
                     video.stop()
