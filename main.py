@@ -16,6 +16,13 @@ from free_fly import FreeFlyController
 from models import list_models, load_model, recognize_in_frame, find_samples_for_model
 from ui import BlueButton, ToggleSwitch, Tabs, Dialog, Theme
 
+# Optional: detect PyAV availability for more reliable video on Windows/Linux
+try:
+    import av  # type: ignore
+    _has_pyav = True
+except Exception:
+    _has_pyav = False
+
 # Connection state (lazy connect)
 tello = None
 video = None
@@ -1121,6 +1128,42 @@ def update_frame():
             video_label.image = imgtk
     root.after(30, update_frame)
 
+def _attempt_restart_video_stream():
+    def _do_restart():
+        try:
+            ui_status('Restarting video stream...')
+            try:
+                if video is not None:
+                    video.stop()
+            except Exception:
+                pass
+            try:
+                if tello is not None:
+                    try:
+                        tello.streamoff()
+                    except Exception:
+                        pass
+                    time.sleep(0.6)
+                    try:
+                        tello.streamon()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                if 'video' in globals() and video is not None:
+                    video.frame_read = tello.get_frame_read() if tello is not None else None
+                    video.start()
+                else:
+                    globals()['video'] = TelloVideo(tello)
+                    globals()['video'].start()
+                globals()['video_started'] = True
+            except Exception:
+                globals()['video_started'] = False
+        except Exception:
+            pass
+    run_async(_do_restart)
+
 def on_close():
     # Clear UI and show closing overlay immediately
     try:
@@ -1482,6 +1525,18 @@ def periodic_check():
             video_started = False
             _show_overlay('Disconnected')
         else:
+            # If connected but no recent frames, try a controlled stream restart (debounced)
+            try:
+                if is_connected:
+                    if not video_recent:
+                        last_restart = globals().get('_last_video_restart_ts', 0.0)
+                        if (now - last_restart) > 10.0:
+                            globals()['_last_video_restart_ts'] = now
+                            if not _has_pyav:
+                                ui_status('No frames. Tip: install PyAV (pip install av) for stable video')
+                            _attempt_restart_video_stream()
+            except Exception:
+                pass
             if not video_started and video is not None:
                 try:
                     video.start()
